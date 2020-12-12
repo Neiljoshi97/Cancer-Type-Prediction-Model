@@ -1,0 +1,124 @@
+---
+title: "Project - Data Mining"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+setwd("D:/Grad Study/Data Mining/Project/")
+Cancer <- read.csv("Breast Cancer.csv")
+```
+```{r}
+str(Cancer)
+Cancer$id <- NULL
+Cancer$X <- NULL
+anyNA(Cancer)
+Cancer1 <- Cancer[,c(-1:-2)]
+correlations <- cor(Cancer1)
+dim(correlations)
+library(corrplot)
+library(caret)
+corrplot(correlations, order = "hclust", tl.cex = 1, addrect = 8)
+highCorr <- findCorrelation(correlations, cutoff = 0.85)
+length(highCorr)
+filteredCancer <- Cancer[,-highCorr]
+```
+```{r}
+Cancer.trans <- preProcess(filteredCancer, method = c("BoxCox", "center", "scale"))
+Cancer.transformed <- predict(Cancer.trans, filteredCancer)
+head(Cancer.transformed[,1:4])
+```
+```{r}
+segmentation <- Cancer[,2]
+pca.out <- prcomp(Cancer.transformed)
+pca.var = pca.out$sdev^2
+pve = pca.var/sum(pca.var)
+z= seq(1,17)
+cumpve = cumsum(pve)
+pve.table = as.data.frame(cbind(z,pve, cumpve))
+ggplot(pve.table, aes(x=z, y=pve))+ geom_point()
+```
+```{r}
+ggplot(pve.table, aes(x=z, y=cumpve))+ geom_point() + geom_abline(intercept = 0.95, slope = 0, color = "red")
+```
+```{r}
+library(GGally)
+require(GGally)
+PCs <- as.data.frame(cbind(segmentation, pca.out$x))
+PCs$segmentation <- as.factor(PCs$segmentation)
+ggpairs(data = PCs, columns = 2:4, ggplot2::aes(color = segmentation))
+```
+```{r}
+library(ggplot2)
+library(lattice)
+library(caret)
+set.seed(1)
+```
+```{r}
+DataPart <- createDataPartition(Cancer$diagnosis, p=0.8, list = F)
+Train <- Cancer[DataPart,]
+Test <- Cancer[-DataPart,]
+```
+```{r}
+set.seed(999)
+ctrl <- trainControl(method = "cv", number = 5)
+```
+```{r}
+knn_c <- train(diagnosis~., data = Cancer, method = "knn", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 5)
+knn_c$results
+plot(knn_c)
+```
+```{r}
+Train_Scaled <- scale(Train[,-1], center = T, scale = T)
+Test_Scaled <- scale(Test[,-1], center = T, scale = T)
+library(class)
+knn <- knn(train = Train_Scaled, test = Test_Scaled, cl=Train$diagnosis, k = 5)
+```
+```{r}
+mean(knn ==Test$diagnosis)
+summary(Cancer)
+summary(knn)
+```
+```{r}
+
+Pred1 <- train(diagnosis~., data = Cancer, method = "glm", trControl = ctrl, tuneLength = 20)
+Pred1$results
+```
+```{r}
+library(ROCR)
+n <- dim(Cancer)[1]
+p <- 5
+nsim <- round(n/5,0)
+Pred_p <- predict(Pred1, Cancer, type = "prob")
+Score <- prediction(Pred_p$B, Cancer$diagnosis)
+Roc_obj <- performance(Score, "auc")
+auc.glm <- Roc_obj@y.values[[1]]
+acc_glm <- rep(NA, nsim)
+sen_glm <- rep(NA, nsim)
+spec_glm <- rep(NA, nsim)
+f <- rep(NA, nsim)
+```
+```{r}
+for (i in 1:nsim) {
+  testID <- sample(n, p, replace = FALSE)
+  data.tr <- Cancer[-testID,]
+  data.test <- Cancer[testID,]
+  Pred2 <- train(diagnosis~., data = data.tr, method = "glm", trControl = ctrl)
+  pred <- predict(Pred2, data.test)
+  a <- confusionMatrix(pred, data.test$diagnosis)
+  acc_glm[i] <- a$overall[[1]]
+  sen_glm[i] <- a$byClass[[1]]
+  spec_glm[i] <- a$byClass[[2]]
+  f[i] <- a$byClass["F1"]
+}
+acc.5kcv <- mean(na.omit(acc_glm))
+sen.5kcv <- mean(na.omit(sen_glm))
+spec.5kcv <- mean(na.omit(spec_glm))
+f1 <- mean(na.omit(f))
+data.frame(acc = acc.5kcv, sen = sen.5kcv, spec = spec.5kcv, F1 = f1, AUROC = auc.glm)
+summary(pred)
+```
